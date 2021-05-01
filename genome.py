@@ -52,12 +52,14 @@ class Genome:
         Return type is a tuple (G, W) where G is the number of unshared genes in 
         both genomes, and W is the average weight difference between shared
         genes."""
-        i = 1
+        i = 0
         W_sum = 0
         while self.connections[i].innovation == other.connections[i].innovation:
-            i += 1
             W_sum += abs(self.connections[i].weight -
                          other.connections[i].weight)
+            i += 1
+            if i >= len(self.connections) or i >= len(other.connections):
+                break
 
         G = len(self.connections) - i + len(other.connections) - i
         W = W_sum / i
@@ -79,7 +81,8 @@ class Genome:
         # get shared genes. Guaranteed to be first genes because of our
         # implementation.
         i = 0
-        while (self.connections[i].innovation
+        min_size = min(len(self.connections), len(other.connections))
+        while (i < min_size and self.connections[i].innovation
                == other.connections[i].innovation):
             if random.random() > 0.5:
                 new_connection_genes.append(
@@ -118,6 +121,11 @@ class Genome:
                 but with values as tuples of the form:
                     (visited=False, [<connections>])
                 that can be used for general graph traversal"""
+
+        # DEBUG:
+        # print(self.neurons)
+        # print(self.connections)
+
         graph = {}
         adj_list_ind = 2
         for neuron in self.neurons:
@@ -136,6 +144,7 @@ class Genome:
         Requires the return value of build_neural_net() as a parameter
         Requires size of input to match number of input sensors of the genome.
         Returns activation values of output neurons"""
+
         # reset memo
         for key in neural_net:
             neural_net[key][0] = None

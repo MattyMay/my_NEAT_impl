@@ -1,6 +1,6 @@
 from genome import Genome
-from bisect import bisect_left
-from random import random
+from copy import deepcopy
+import random
 
 
 class Species:
@@ -23,12 +23,21 @@ class Species:
         self.genomes.sort(reverse=True, key=lambda gen: gen.fitness)
         new_genomes = []
         count = 0
-        num_candidates = len(self.genomes) // (1/reproduce_rate)
+        num_candidates = max(1, int(len(self.genomes) / (1/reproduce_rate)))
+
+        #DEBUG
+        # print(new_size)
+        # print(num_candidates)
+
         while count < new_size:
-            gen1 = random.choice(self.genomes[:num_candidates])
-            gen2 = random.choice(self.genomes[:num_candidates])
-            new_genomes.append(gen1.recombine(gen2))
+            if num_candidates == 1:
+                new_genomes.append(deepcopy(self.genomes[0]))
+            else:
+                gen1 = random.choice(self.genomes[:num_candidates])
+                gen2 = random.choice(self.genomes[:num_candidates])
+                new_genomes.append(gen1.recombine(gen2))
             count += 1
+
         return new_genomes
 
 
@@ -41,23 +50,25 @@ class Population:
         self.best = None
 
         # initialize poulation
-        for _ in config.pop_size:
-            genome = Genome(config)
+        for _ in range(config.pop_size):
+            genome = Genome(config, init=True)
             genome.fitness = self.fitness_func(genome)
 
             if not self.species:
                 self.species.append(Species(genome, 1))
             else:
                 for spec in self.species:
-                    diffs = genome.get_distance(spec[0])
+                    diffs = genome.get_distance(spec.genomes[0])
                     if (diffs[0] * config.topological_comp_coef
                             + diffs[1] * config.weight_comp_coef
                             < config.comp_threshold):
-                        spec.append[genome]
+                        spec.genomes.append(genome)
                         break
                     else:
                         new_spec_id = self.species[-1].id + 1
                         self.species.append(Species(genome, new_spec_id))
+                        break
+
 
     def do_timestep(self):
         self.reproduce()
@@ -74,8 +85,9 @@ class Population:
         new_pop = []
         sum_adj_fit = sum(spec.fitness for spec in self.species)
         for spec in self.species:
-            num_children = spec.fitness // sum_adj_fit
-            new_pop.extend(spec.reproduce(num_children, self.config.reproduce))
+            num_children = max(1, spec.fitness // sum_adj_fit)
+            new_pop.extend(spec.reproduce(
+                num_children, self.config.reproduce_rate))
 
         # put into species
         self.classify_species(new_pop)
@@ -85,7 +97,7 @@ class Population:
         for genome in new_pop:
             is_new = True
             for spec in self.species:
-                diffs = genome.get_distance(spec[0])
+                diffs = genome.get_distance(spec.genomes[0])
                 if (diffs[0] * self.config.topological_comp_coef
                         + diffs[1] * self.config.weight_comp_coef
                         < self.config.comp_threshold):
@@ -97,7 +109,7 @@ class Population:
                     for s in new_species:
                         if s.id == spec.id:
                             found = True
-                            s.append(genome)
+                            s.genomes.append(genome)
                             break
                     if not found:
                         new_species.append(
@@ -121,3 +133,9 @@ class Population:
                 genome.fitness = self.fitness_func(genome)
                 if self.best == None or genome.fitness > self.best.fitness:
                     self.best = genome
+
+    def print_stats(self):
+        print("Best fitness:", self.best.fitness)
+        for spec in self.species:
+            print("ID:", spec.id, "| Number:", len(
+                spec.genomes), "| Adj Fitness:", spec.fitness)
