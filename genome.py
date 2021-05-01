@@ -292,30 +292,3 @@ class Genome:
                     graph[i][0] = True
 
         return False
-
-
-if __name__ == '__main__':
-    class Config:
-        def __init__(self):
-            self.num_inputs = 2
-            self.num_outputs = 2
-            self.max_weight = 10
-            self.reproduce_rate = 0.5
-
-    config = Config()
-    out1 = NeuronGene(2, -3)
-    out2 = NeuronGene(3, -3)
-    conn1 = ConnectionGene(0, 2, 0, 0)
-    conn2 = ConnectionGene(0, 3, 6, 1)
-    conn3 = ConnectionGene(1, 2, 6, 2)
-    conn4 = ConnectionGene(1, 3, 0, 3)
-
-    conns = [conn1, conn2, conn3, conn4]
-    neurs = [out1, out2]
-
-    def fitness(fit):
-        return 0
-
-    genome = Genome(config)
-    neural_net = genome.build_neural_net()
-    print(genome.activate(neural_net, [1, 1]))
