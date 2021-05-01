@@ -1,5 +1,6 @@
 import math
 import random
+from copy import deepcopy
 
 
 def sigmoid(x):
@@ -14,35 +15,53 @@ class ConnectionGene:
         self.innovation = innovation
         self.enabled = enabled
 
-    def deepcopy(self):
-        return ConnectionGene(
-            self.from_id,
-            self.to_id,
-            self.weight,
-            self.innovation,
-            self.enabled)
-
-
 class NeuronGene:
     def __init__(self, id, bias):
         self.id = id
         self.bias = bias
 
-    def deepcopy(self):
-        return NeuronGene(self.id, self.bias)
-
 
 class Genome:
-    def __init__(self, config, fitness_func, connections=[], neurons=[]):
+    def __init__(self, config, init=False):
         self.config = config
-        self.fitness_func = fitness_func
-        self.connections = connections
-        self.neurons = neurons
+        self.connections = []
+        self.neurons = []
         self.fitness = None
+
+        if init:
+            # construct neuron genes (outputs)
+            id = config.num_inputs
+            while id < config.num_inputs + config.num_outputs:
+                neuron = NeuronGene(id, 1)
+                self.neurons.append(neuron)
+                id += 1
+
+            # connect each input to each output
+            inno = 1
+            for inp in range(config.num_inputs):
+                for out in range(config.num_outputs):
+                    self.__add_connection(inp, out + config.num_inputs, inno)
+                    inno += 1
 
     ############################################################################
     #######################       PUBLIC        ################################
     ############################################################################
+
+    def get_distance(self, other):
+        """Returns two values for calculating genetic distance between self and other.
+        Return type is a tuple (G, W) where G is the number of unshared genes in 
+        both genomes, and W is the average weight difference between shared
+        genes."""
+        i = 1
+        W_sum = 0
+        while self.connections[i].innovation == other.connections[i].innovation:
+            i += 1
+            W_sum += abs(self.connections[i].weight -
+                         other.connections[i].weight)
+
+        G = len(self.connections) - i + len(other.connections) - i
+        W = W_sum / i
+        return (G, W)
 
     def mutate(self, curr_innovation):
         """ Calls mutation functions that take care of each mutation operator.
@@ -64,33 +83,62 @@ class Genome:
                == other.connections[i].innovation):
             if random.random() > 0.5:
                 new_connection_genes.append(
-                    self.connections[i].deepcopy())
+                    deepcopy(self.connections[i]))
             else:
                 new_connection_genes.append(
-                    other.connections[i].deepcopy())
+                    deepcopy(other.connections[i]))
             i += 1
 
         # copy connection genes from more fit genome
         fitter = self if self.fitness > other.fitness else other
-        while i < fitter.connections.size():
-            new_connection_genes.append(fitter.connections[i])
+        while i < len(fitter.connections):
+            new_connection_genes.append(deepcopy(fitter.connections[i]))
             i += 1
 
         # copy neuron genes from more fit genome
-        new_neuron_genes = [neuron.deepcopy() for neuron in fitter.neurons]
+        new_neuron_genes = [deepcopy(neuron) for neuron in fitter.neurons]
 
-        return Genome(
-            self.config,
-            self.fitness_func,
-            new_connection_genes,
-            new_neuron_genes)
+        new_genome = Genome(self.config)
+        new_genome.connections = new_connection_genes
+        new_genome.neurons = new_neuron_genes
+        return new_genome
 
-    def activate(self, input):
+    def build_neural_net(self, for_activate=True):
+        """Builds the neural net from the genome.
+        Used for activation and to prevent backwards connections.
+        params: if for_activate is set to True (default), returns graph as 
+                dictionary with neuron IDs as keys, and 3-tuple values of the
+                form:
+                    (activation_value=None, bias, [<connections>])
+                that serves as both an adjency list and a memo for efficiently
+                calculating activation of each neuron in a recursive manner.
+                This is what needs to be passed to Genome's activate function.
+
+                if for_activate is set to False, returns a graph much the same
+                but with values as tuples of the form:
+                    (visited=False, [<connections>])
+                that can be used for general graph traversal"""
+        graph = {}
+        adj_list_ind = 2
+        for neuron in self.neurons:
+            if for_activate:
+                graph[neuron.id] = [None, neuron.bias, []]
+            else:
+                graph[neuron.id] = [False, []]
+                adj_list_ind = 1
+        for i in range(len(self.connections)):
+            if self.connections[i].enabled:
+                graph[self.connections[i].to_id][adj_list_ind].append(i)
+        return graph
+
+    def activate(self, neural_net, input):
         """Activates the neural net.
+        Requires the return value of build_neural_net() as a parameter
         Requires size of input to match number of input sensors of the genome.
         Returns activation values of output neurons"""
-        # build graph from conns and neurons as adjacency list / memo for DP
-        graph = self.__build_graph()
+        # reset memo
+        for key in neural_net:
+            neural_net[key][0] = None
 
         # recursive function to evaluate a single neuron
         def activate_neuron(neuron):
@@ -100,17 +148,17 @@ class Genome:
                 return input[neuron]
 
             # don't recompute if already computed
-            if graph[neuron][0] is not None:
-                return graph[neuron][0]
+            if neural_net[neuron][0] is not None:
+                return neural_net[neuron][0]
 
             # get sum of input values (+ bias)
-            inp_sum = graph[neuron][1]
-            for conn in graph[neuron][2]:
+            inp_sum = neural_net[neuron][1]
+            for conn in neural_net[neuron][2]:
                 inp_sum += (self.connections[conn].weight
                             * activate_neuron(self.connections[conn].from_id))
 
-            graph[neuron][0] = sigmoid(inp_sum)
-            return graph[neuron][0]
+            neural_net[neuron][0] = sigmoid(inp_sum)
+            return neural_net[neuron][0]
 
         # evaluate output neurons
         outputs = []
@@ -220,7 +268,7 @@ class Genome:
         if from_id == to_id:
             return True
 
-        graph = self.__build_graph(for_activate=False)
+        graph = self.build_neural_net(for_activate=False)
         queue = []
         queue.append(from_id)
         graph[from_id][0] = True
@@ -236,38 +284,14 @@ class Genome:
 
         return False
 
-    def __build_graph(self, for_activate=True):
-        """Helper that builds a graph as an adjency list out of genome.
-        Used for activation and to prevent backwards connections.
-        params: if for_activate is set to True, returns graph as dictionary with
-                neuron IDs as keys, and 3-tuple values of the form:
-                    (activation_value=None, bias, [<connections>])
-                that serves as both an adjency list and a memo for efficiently
-                calculating activation of each neuron in a recursive manner.
-
-                if for_activate is set to False, returns a graph much the same
-                but with values as tuples of the form:
-                    (visited=False, [<connections>])
-                that can be used for general graph traversal"""
-        graph = {}
-        adj_list_ind = 2
-        for neuron in self.neurons:
-            if for_activate:
-                graph[neuron.id] = [None, neuron.bias, []]
-            else:
-                graph[neuron.id] = [False, []]
-                adj_list_ind = 1
-        for i in range(len(self.connections)):
-            if self.connections[i].enabled:
-                graph[self.connections[i].to_id][adj_list_ind].append(i)
-        return graph
-
 
 if __name__ == '__main__':
     class Config:
         def __init__(self):
             self.num_inputs = 2
             self.num_outputs = 2
+            self.max_weight = 10
+            self.reproduce_rate = 0.5
 
     config = Config()
     out1 = NeuronGene(2, -3)
@@ -283,5 +307,6 @@ if __name__ == '__main__':
     def fitness(fit):
         return 0
 
-    genome = Genome(config, fitness, conns, neurs)
-    print(genome.activate([1, 1]))
+    genome = Genome(config)
+    neural_net = genome.build_neural_net()
+    print(genome.activate(neural_net, [1, 1]))
